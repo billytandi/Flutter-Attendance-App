@@ -8,10 +8,10 @@ class AttendanceViewModel {
     await _firestore.collection('attendance').add(attendance.toMap());
   }
 
-  Future<List<Attendance>> getAttendanceHistory(String driverId) async {
+  Future<List<Attendance>> getAttendanceHistory(String employeeID) async {
     QuerySnapshot querySnapshot = await _firestore
         .collection('attendance')
-        .where('driver_id', isEqualTo: driverId)
+        .where('employee_ID', isEqualTo: employeeID)
         .get();
     
     return querySnapshot.docs.map((doc) {
