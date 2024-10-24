@@ -2,10 +2,11 @@ import 'dart:convert'; // Untuk decode JSON dari QR Code
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
+import 'package:skripsi/views/home.dart';
 import '../viewmodels/attendance_viewmodel.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:firebase_auth/firebase_auth.dart';  
-import 'package:cloud_firestore/cloud_firestore.dart';  
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class QRScanPage extends StatefulWidget {
   @override
@@ -16,17 +17,35 @@ class _QRScanPageState extends State<QRScanPage> {
   final GlobalKey qrKey = GlobalKey();
   QRViewController? controller;
   final AttendanceViewModel _attendanceViewModel = AttendanceViewModel();
-  bool isProcessing = false; // Flag untuk memastikan hanya satu kali proses scan
+  bool isProcessing =
+      false; // Flag untuk memastikan hanya satu kali proses scan
+
+  @override
+  void dispose() {
+    controller?.dispose();
+    super.dispose();
+  }
 
   @override
   void reassemble() {
     super.reassemble();
-    if (Platform.isAndroid) {
+    if (Platform.isIOS) {
       controller!.pauseCamera();
     }
     controller!.resumeCamera();
   }
 
+  /// Proses scan QR Code dan simpan data absensi ke Firestore.
+  ///
+  /// Berikut adalah proses yang dilakukan:
+  ///
+  /// 1. Decode QR Code yang berisi JSON.
+  /// 2. Dapatkan lokasi dari QR Code.
+  /// 3. Dapatkan UID karyawan yang sedang login.
+  /// 4. Ambil data karyawan dari Firestore berdasarkan UID.
+  /// 5. Dapatkan lokasi saat ini.
+  /// 6. Simpan data absensi ke Firestore.
+  /// 7. Tampilkan pop-up sukses jika berhasil.
   Future<void> _recordAttendance(String qrCode) async {
     setState(() {
       isProcessing = true; // Menampilkan loading icon
@@ -39,7 +58,7 @@ class _QRScanPageState extends State<QRScanPage> {
       // Decode QR Code yang berisi JSON
       Map<String, dynamic> qrData = jsonDecode(qrCode);
       String location = qrData['location'];
-      
+
       // Dapatkan UID karyawan yang sedang login
       User? user = FirebaseAuth.instance.currentUser;
 
@@ -65,8 +84,8 @@ class _QRScanPageState extends State<QRScanPage> {
             'latitude': position.latitude,
             'longitude': position.longitude,
           },
-          'employee_name': employeeName,  // Tambahkan nama karyawan
-          'uid': user.uid  // Tambahkan UID karyawan
+          'employee_name': employeeName, // Tambahkan nama karyawan
+          'uid': user.uid // Tambahkan UID karyawan
         });
 
         // Tampilkan pop-up sukses setelah berhasil menyimpan data
@@ -74,11 +93,22 @@ class _QRScanPageState extends State<QRScanPage> {
           context: context,
           builder: (_) => AlertDialog(
             title: Text('Absensi Berhasil'),
-            content: Text('Absensi berhasil disimpan dengan nama $employeeName di lokasi $location!'),
+            content: Text(
+                'Absensi berhasil disimpan dengan nama $employeeName di lokasi $location!'),
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context); // Tutup dialog
+                  // Stop the QR code scanner and pause the camera here
+                  controller?.pauseCamera(); // Pausing the camera
+
+                  // Navigate back to the Home page
+                  Navigator.of(context).pop(); // Close the dialog
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (context) => Home()),
+                    (Route<dynamic> route) => false,
+                  );
+
+                  // Reset the processing flag
                   setState(() {
                     isProcessing = false; // Set kembali flag ke false
                   });
@@ -99,7 +129,8 @@ class _QRScanPageState extends State<QRScanPage> {
         content: Text('Gagal memproses absensi: $e'),
       ));
       setState(() {
-        isProcessing = false; // Kembalikan state processing ke false jika ada error
+        isProcessing =
+            false; // Kembalikan state processing ke false jika ada error
       });
     }
   }
@@ -117,7 +148,8 @@ class _QRScanPageState extends State<QRScanPage> {
               onQRViewCreated: (QRViewController controller) {
                 this.controller = controller;
                 controller.scannedDataStream.listen((scanData) {
-                  if (!isProcessing) { // Cek jika tidak dalam proses
+                  if (!isProcessing) {
+                    // Cek jika tidak dalam proses
                     _recordAttendance(scanData.code!); // Jalankan hanya sekali
                   }
                 });
@@ -135,11 +167,5 @@ class _QRScanPageState extends State<QRScanPage> {
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    controller?.dispose();
-    super.dispose();
   }
 }
