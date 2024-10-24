@@ -11,9 +11,9 @@ class AttendanceViewModel {
   Future<List<Attendance>> getAttendanceHistory(String employeeID) async {
     QuerySnapshot querySnapshot = await _firestore
         .collection('attendance')
-        .where('employee_ID', isEqualTo: employeeID)
+        .where('uid', isEqualTo: employeeID) // Diganti dengan field `uid`
         .get();
-    
+
     return querySnapshot.docs.map((doc) {
       return Attendance(
         id: doc.id,
@@ -21,6 +21,8 @@ class AttendanceViewModel {
         timestamp: (doc['timestamp'] as Timestamp).toDate(),
         latitude: doc['location']['latitude'],
         longitude: doc['location']['longitude'],
+        uid: doc['uid'], // Ditambahkan UID dari data
+        status: doc['status'],
       );
     }).toList();
   }

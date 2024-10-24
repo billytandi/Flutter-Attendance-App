@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:skripsi/views/attendance_history.dart';
 import 'login_page.dart';
 import 'qrscanpage.dart';
+import 'package:geolocator/geolocator.dart';
 
 class Home extends StatefulWidget {
   const Home({Key? key}) : super(key: key);
@@ -20,7 +21,7 @@ class _HomeState extends State<Home> {
   late DateTime checkInTime;
   late DateTime checkOutTime;
   final Duration breakTime = const Duration(hours: 2);
-  final int workingDays = 16;
+  final int workingDays = 22;
   late String _currentTime = '00:00:00';
   late Timer _timer;
   String userName = '';
@@ -75,7 +76,7 @@ class _HomeState extends State<Home> {
         var userData = userDoc.data() as Map<String, dynamic>;
         setState(() {
           userName = userData['name'] ?? 'Nama tidak tersedia';
-          userPosition = userData['departement'] ?? 'Posisi dak tersedia';
+          userPosition = userData['position'] ?? 'Posisi dak tersedia';
           isLoading = false;
         });
       } else {
@@ -95,35 +96,33 @@ class _HomeState extends State<Home> {
   }
 
   // New method to fetch attendance data
-Future<void> _fetchAttendanceData() async {
-  try {
-    DocumentSnapshot attendanceDoc = await FirebaseFirestore.instance
-        .collection('attendance')
-        .doc(_user!.uid) // Menggunakan user ID sebagai document ID
-        .get();
-    if (attendanceDoc.exists) {
-      var attendanceData = attendanceDoc.data() as Map<String, dynamic>;
-      setState(() {
-        // Update nilai formattedCheckInTime dan checkInStatusText
-        formattedCheckInTime = attendanceData['checkInTime'] != null
-            ? DateFormat('HH:mm').format(attendanceData['checkInTime'].toDate())
-            : '-';
-        checkInStatusText = attendanceData['checkInTime'] != null
-            ? 'Sudah Check In'
-            : 'Belum Check In';
-
-        // Update formattedCheckOutTime dan checkOutStatus
-        formattedCheckOutTime = attendanceData['checkOutTime'] != null
-            ? DateFormat('HH:mm').format(attendanceData['checkOutTime'].toDate())
-            : '-';
-        checkOutStatus = attendanceData['checkOutStatus'] ?? '-';
-      });
+  Future<void> _fetchAttendanceData() async {
+    try {
+      DocumentSnapshot attendanceDoc = await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(_user!.uid) // Assuming the attendance document ID is the user ID
+          .get();
+      if (attendanceDoc.exists) {
+        var attendanceData = attendanceDoc.data() as Map<String, dynamic>;
+        
+        setState(() {
+          // Update the formatted values based on the attendance data
+          formattedCheckInTime = attendanceData['timestamp'] != null
+              ? DateFormat('HH:mm')
+                  .format(attendanceData['timestamp'].toDate())
+              : '-';
+          formattedCheckOutTime = attendanceData['timestamp'] != null
+              ? DateFormat('HH:mm')
+                  .format(attendanceData['timestamp'].toDate())
+              : '-';
+          checkOutStatus = attendanceData['checkOutStatus'] ?? '-';
+          // Update other fields as necessary
+        });
+      }
+    } catch (e) {
+      print('Error fetching attendance data: $e');
     }
-  } catch (e) {
-    print('Error fetching attendance data: $e');
   }
-}
-
 
   String _formatCurrentTime() {
     return DateFormat('HH:mm:ss').format(DateTime.now());
@@ -260,11 +259,46 @@ Future<void> _fetchAttendanceData() async {
     });
   }
 
-  void _setWorkStatus(String status) {
-    setState(() {
-      checkInStatusText = status; // Update status di UI
+Future<void> _setWorkStatus(String status) async {
+  setState(() {
+    checkInStatusText = status; // Update status di UI
+  });
+
+  try {
+    // Periksa izin lokasi dan ambil posisi saat ini
+    Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high);
+
+    // Dapatkan latitude dan longitude dari posisi pengguna
+    final location = {
+      'lat': position.latitude,
+      'long': position.longitude
+    };
+
+    // Dapatkan data qr_code, ini bisa berasal dari logika scan QR yang sudah ada
+    final qrCode = "-"; // Gantilah dengan nilai sebenarnya dari QR scanner
+
+    // Simpan data ke Firestore
+    await FirebaseFirestore.instance.collection('attendance').add({
+      'employee_name': userName,
+      'location': location,  // Simpan lokasi dalam format Map
+      'qr_code': qrCode,
+      'timestamp': FieldValue.serverTimestamp(), // Mendapatkan timestamp server
+      'uid': _user!.uid,  // UID dari pengguna yang login
+      'status': status,  // Status yang dipilih oleh pengguna
     });
+
+    // Menampilkan pesan sukses jika diperlukan
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Status berhasil disimpan: $status'),
+    ));
+  } catch (e) {
+    print('Error menyimpan status: $e');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Gagal menyimpan status: $e'),
+    ));
   }
+}
 
   Future<void> _showWorkStatusOptions() async {
     showDialog(
@@ -283,9 +317,9 @@ Future<void> _fetchAttendanceData() async {
                       Navigator.of(context).pop(); // Tutup dialog
                       _navigateToQRScanPage(); // Arahkan ke QR scanner
                     }),
-                    _buildStatusOption('Sakit', Icons.sick, () {
+                    _buildStatusOption('Telat', Icons.lock_clock, () {
                       Navigator.of(context).pop(); // Tutup dialog
-                      _setWorkStatus('Sakit'); // Set status kerja Sakit
+                      _setWorkStatus('Telat'); // Set status kerja sebagai Telat
                     }),
                   ],
                 ),
@@ -296,9 +330,9 @@ Future<void> _fetchAttendanceData() async {
                       Navigator.of(context).pop(); // Tutup dialog
                       _setWorkStatus('Izin'); // Set status kerja Izin
                     }),
-                    _buildStatusOption('Telat', Icons.timer_off, () {
+                    _buildStatusOption('Sakit', Icons.sick, () {
                       Navigator.of(context).pop(); // Tutup dialog
-                      _setWorkStatus('Telat'); // Set status kerja Telat
+                      _setWorkStatus('Sakit'); // Set status kerja sebagai Sakit
                     }),
                   ],
                 ),
@@ -323,6 +357,7 @@ Future<void> _fetchAttendanceData() async {
   }
 
   Widget _buildAttendanceSection(
+    
       String formattedCheckInTime,
       String checkInStatus,
       String formattedCheckOutTime,
