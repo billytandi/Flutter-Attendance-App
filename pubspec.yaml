@@ -48,6 +48,8 @@ dependencies:
       version: ^1.0.0
   location: ^7.0.1
   permission_handler: ^11.3.1
+  image_picker: ^1.1.2
+  firebase_storage: ^12.3.4
 
 dev_dependencies:
   flutter_test:

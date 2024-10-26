@@ -51,7 +51,12 @@
 	<string>App ini memerlukan akses ke lokasi Anda untuk mendeteksi area sekitar.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app requires camera access to scan QR codes for attendance.</string>
-
-
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app requires library access to change photo profile.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+	<key>NSAllowsArbitraryLoads</key>
+	<true/>
+	</dict>
 </dict>
 </plist>

@@ -11,7 +11,7 @@ Future<List<Map<String, dynamic>>> getAttendanceHistory() async {
     QuerySnapshot attendanceSnapshot = await FirebaseFirestore.instance
         .collection('attendance')
         .where('uid', isEqualTo: user.uid) // Filter berdasarkan UID
-        .orderBy('timestamp', descending: true) // Urutkan berdasarkan timestamp
+        .orderBy('checkin', descending: true) // Urutkan berdasarkan timestamp
         .get();
 
     // Buat list untuk menyimpan data absensi
@@ -55,18 +55,39 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return Center(child: Text('Belum ada riwayat'));
           } else {
-            
             // Tampilkan riwayat absensi
             List<Map<String, dynamic>> history = snapshot.data!;
             return ListView.builder(
               itemCount: history.length,
               itemBuilder: (context, index) {
                 Map<String, dynamic> attendance = history[index];
-
                 // Ambil dan format timestamp
-                DateTime timestamp = attendance['timestamp'].toDate();
-                String formattedDate = '${timestamp.day.toString().padLeft(2, '0')}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.year}';
-                String formattedTime = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+                // Check if 'checkin' field exists and is not null
+                DateTime? timestamp = attendance.containsKey('checkin') &&
+                        attendance['checkin'] != null
+                    ? attendance['checkin'].toDate()
+                    : null;
+
+                // Default value if 'checkin' is null
+                String formattedCheckIn = timestamp != null
+                    ? '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}'
+                    : '-';
+
+                // For check-out (assuming a similar structure for checkout)
+                DateTime? checkoutTimestamp =
+                    attendance.containsKey('checkout') &&
+                            attendance['checkout'] != null
+                        ? attendance['checkout'].toDate()
+                        : null;
+
+                String formattedCheckOut = checkoutTimestamp != null
+                    ? '${checkoutTimestamp.hour.toString().padLeft(2, '0')}:${checkoutTimestamp.minute.toString().padLeft(2, '0')}'
+                    : '-';
+
+                // Date formatting, with a default empty string for missing checkin
+                String formattedDate = timestamp != null
+                    ? '${timestamp.day.toString().padLeft(2, '0')}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.year}'
+                    : '-';
 
                 String location;
                 String keterangan;
@@ -76,9 +97,9 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                   String qrCode = attendance['qr_code'];
                   try {
                     Map<String, dynamic> qrData = jsonDecode(qrCode);
-                    location = qrData.containsKey('location') 
-                      ? qrData['location'] 
-                      : '-'; // Jika tidak ada kunci 'location', isi dengan '-'
+                    location = qrData.containsKey('location')
+                        ? qrData['location']
+                        : '-'; // Jika tidak ada kunci 'location', isi dengan '-'
                   } catch (e) {
                     location = '-';
                     print('Kesalahan saat mendekode qr_code: $e');
@@ -88,9 +109,9 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                 }
 
                 // Mengambil keterangan
-                keterangan = attendance.containsKey('status') 
-                  ? attendance['status'] 
-                  : 'Tidak ada keterangan';
+                keterangan = attendance.containsKey('status')
+                    ? attendance['status']
+                    : 'Tidak ada keterangan';
 
                 // Tampilkan dalam Card untuk tampilan yang lebih modern
                 return Card(
@@ -115,7 +136,7 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                               ),
                             ),
                             Text(
-                              formattedTime,
+                              formattedCheckIn,
                               style: TextStyle(
                                 fontSize: 16,
                                 color: Colors.grey[600],
@@ -134,6 +155,14 @@ class _AttendanceHistoryPageState extends State<AttendanceHistoryPage> {
                         SizedBox(height: 8.0),
                         Text(
                           'Keterangan: $keterangan',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                        SizedBox(height: 8.0),
+                        Text(
+                          'Check Out: $formattedCheckOut',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[700],

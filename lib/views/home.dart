@@ -21,7 +21,6 @@ class _HomeState extends State<Home> {
   late DateTime checkInTime;
   late DateTime checkOutTime;
   final Duration breakTime = const Duration(hours: 2);
-  final int workingDays = 22;
   late String _currentTime = '00:00:00';
   late Timer _timer;
   String userName = '';
@@ -30,19 +29,16 @@ class _HomeState extends State<Home> {
 
   // Initialize to default values
   DateTime? checkInTimestamp;
-  String checkInStatusText = 'Belum Check In';
+  String checkInStatus = 'Belum In';
   String formattedCheckInTime = '-'; // Default value
-  String checkOutStatus = '-'; // Default value
+  String checkOutStatus = 'Belum Check Out'; // Default value
   String formattedCheckOutTime = '-'; // Default value
   String formattedBreakTime = '-'; // Default value
-
+  int workingDays = 0;
+  int absenceDays = 0;
   @override
   void initState() {
     super.initState();
-    checkInTime =
-        DateTime.now().subtract(const Duration(hours: 7, minutes: 30));
-    checkOutTime =
-        DateTime.now().subtract(const Duration(hours: 16, minutes: 30));
     _checkUserStatus();
     _currentTime = _formatCurrentTime();
     _timer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
@@ -50,6 +46,48 @@ class _HomeState extends State<Home> {
         _currentTime = _formatCurrentTime();
       });
     });
+    _fetchWorkingDays();
+    _fetchAbsenceDays();
+  }
+
+  Future<int> getWorkingDaysCount() async {
+    try {
+      var querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('uid', isEqualTo: _user!.uid)
+          .where('status', whereIn: ['Hadir', 'Telat']).get();
+      return querySnapshot.docs.length;
+    } catch (e) {
+      print('Error fetching working days count: $e');
+      return 0;
+    }
+  }
+
+  Future<void> _fetchWorkingDays() async {
+    int count = await getWorkingDaysCount();
+    setState(() {
+      workingDays = count;
+    });
+  }
+
+  Future<void> _fetchAbsenceDays() async {
+    int count = await getAbsenceDaysCount();
+    setState(() {
+      absenceDays = count;
+    });
+  }
+
+  Future<int> getAbsenceDaysCount() async {
+    try {
+      var querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('uid', isEqualTo: _user!.uid)
+          .where('status', whereNotIn: ['Hadir']).get();
+      return querySnapshot.docs.length;
+    } catch (e) {
+      print('Error fetching absence days count: $e');
+      return 0;
+    }
   }
 
   Future<void> _checkUserStatus() async {
@@ -61,8 +99,7 @@ class _HomeState extends State<Home> {
       );
     } else {
       _fetchUserData();
-      // Call method to fetch attendance data
-      _fetchAttendanceData();
+      _fetchAttendanceData(); // Panggil fetch attendance data
     }
   }
 
@@ -95,29 +132,97 @@ class _HomeState extends State<Home> {
     }
   }
 
-  // New method to fetch attendance data
+  Future<void> _setCheckoutTime() async {
+    try {
+      var today = DateTime.now();
+      var startOfDay = DateTime(
+          today.year, today.month, today.day, 0, 0, 0); // Awal hari (00:00)
+      var endOfDay = DateTime(
+          today.year, today.month, today.day, 23, 59, 59); // Akhir hari (23:59)
+
+      // Query untuk mengambil attendance pada hari ini untuk user saat ini
+      var querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('uid', isEqualTo: _user!.uid)
+          .where('checkin',
+              isGreaterThanOrEqualTo:
+                  startOfDay) // Filter attendance mulai dari awal hari ini
+          .where('checkin',
+              isLessThanOrEqualTo: endOfDay) // Sampai akhir hari ini
+          .get();
+
+      // Jika sudah ada check-in pada hari ini
+      if (querySnapshot.docs.isEmpty) {
+        // Tampilkan pesan bahwa pengguna sudah melakukan check-inV
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Anda sudah melakukan check-out hari ini'),
+          ),
+        );
+        return; // Batalkan proses check-in
+      }
+      if (querySnapshot.docs.isNotEmpty) {
+        var attendanceDoc = querySnapshot.docs.first;
+        print('User UID: ${_user!.uid}');
+
+        await FirebaseFirestore.instance
+            .collection('attendance')
+            .doc(attendanceDoc.id) // Use the document ID
+            .update({
+          'checkout': FieldValue.serverTimestamp(),
+        });
+
+        // Setelah checkout, fetch ulang data attendance untuk memperbarui UI
+        _fetchAttendanceData();
+
+        print('Checkout time updated successfully.');
+      } else {
+        print('Attendance document not found for user: ${_user!.uid}');
+      }
+    } catch (e) {
+      print('Error updating checkout time: $e');
+    }
+  }
+
   Future<void> _fetchAttendanceData() async {
     try {
-      DocumentSnapshot attendanceDoc = await FirebaseFirestore.instance
+      var querySnapshot = await FirebaseFirestore.instance
           .collection('attendance')
-          .doc(_user!.uid) // Assuming the attendance document ID is the user ID
+          .where('uid', isEqualTo: _user!.uid)
           .get();
-      if (attendanceDoc.exists) {
-        var attendanceData = attendanceDoc.data() as Map<String, dynamic>;
-        
+
+      if (querySnapshot.docs.isNotEmpty) {
+        var attendanceDoc = querySnapshot.docs.first.data();
+
+        DateTime? checkInTimestamp =
+            (attendanceDoc['checkin'] as Timestamp?)?.toDate();
+        DateTime? checkOutTimestamp =
+            (attendanceDoc['checkout'] as Timestamp?)?.toDate();
+
         setState(() {
-          // Update the formatted values based on the attendance data
-          formattedCheckInTime = attendanceData['timestamp'] != null
-              ? DateFormat('HH:mm')
-                  .format(attendanceData['timestamp'].toDate())
-              : '-';
-          formattedCheckOutTime = attendanceData['timestamp'] != null
-              ? DateFormat('HH:mm')
-                  .format(attendanceData['timestamp'].toDate())
-              : '-';
-          checkOutStatus = attendanceData['checkOutStatus'] ?? '-';
-          // Update other fields as necessary
+          if (checkInTimestamp != null) {
+            formattedCheckInTime = DateFormat('HH:mm').format(checkInTimestamp);
+            checkInStatus = attendanceDoc['status'] ?? 'Tidak Ada Status';
+          }
+
+          if (checkOutTimestamp != null) {
+            formattedCheckOutTime =
+                DateFormat('HH:mm').format(checkOutTimestamp);
+            checkOutStatus = attendanceDoc['status'] ?? 'Tidak Ada Status';
+
+            if (checkOutTimestamp.hour > 18) {
+              checkOutStatus = 'Lembur';
+            } else if (checkOutTimestamp.hour > 16 ||
+                (checkOutTimestamp.hour == 16 &&
+                    checkOutTimestamp.minute >= 30)) {
+              checkOutStatus = 'On Time';
+            } else {
+              checkOutStatus = 'Pulang Cepat';
+            }
+          }
         });
+      } else {
+        print('Dokumen attendance tidak ditemukan.');
       }
     } catch (e) {
       print('Error fetching attendance data: $e');
@@ -136,7 +241,6 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
-    // No changes needed in the build method
     return Scaffold(
       appBar: AppBar(
         title: const Text('SPILintern'),
@@ -158,10 +262,10 @@ class _HomeState extends State<Home> {
                     style: const TextStyle(
                         fontSize: 48, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 10),
                   _buildAttendanceSection(
                       formattedCheckInTime,
-                      checkInStatusText,
+                      checkInStatus,
                       formattedCheckOutTime,
                       checkOutStatus,
                       formattedBreakTime),
@@ -177,9 +281,9 @@ class _HomeState extends State<Home> {
         borderRadius: BorderRadius.circular(20),
         color: Colors.blue,
       ),
-      height: 280,
+      height: 250,
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(10, 20, 10, 20),
+      margin: const EdgeInsets.fromLTRB(10, 10, 10, 10),
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
@@ -214,19 +318,59 @@ class _HomeState extends State<Home> {
               ),
             ],
           ),
-
-          //PopUp Status
           const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _showWorkStatusOptions,
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.work),
-              SizedBox(width: 10),
-              Text('Work Status'),
-            ]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: _showWorkStatusOptions,
+                child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(Icons.work),
+                      SizedBox(width: 10),
+                      Text('Work Status'),
+                    ]),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (BuildContext context) {
+                      return AlertDialog(
+                        title: const Text('Konfirmasi Checkout'),
+                        content: const Text(
+                            'Apakah Anda yakin ingin melakukan checkout?'),
+                        actions: [
+                          TextButton(
+                            child: const Text('Batal'),
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                            },
+                          ),
+                          TextButton(
+                            child: const Text('Ya, Checkout'),
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              _setCheckoutTime(); // Update checkout time
+                            },
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                },
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: const [
+                    Icon(Icons.work),
+                    SizedBox(width: 10),
+                    Text('Check Out'),
+                  ],
+                ),
+              ),
+            ],
           ),
-
-          //History Page
           const SizedBox(height: 20),
           ElevatedButton(
             onPressed: () {
@@ -237,127 +381,105 @@ class _HomeState extends State<Home> {
               );
             },
             child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.history),
-              SizedBox(width: 10),
-              Text('History'),
+              const Icon(Icons.history),
+              const SizedBox(width: 10),
+              const Text('History'),
             ]),
-          )
+          ),
         ],
       ),
     );
   }
 
-  void _navigateToQRScanPage() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => QRScanPage()),
-    ).then((_) {
-      // Setelah QR scan, update status Check-in
-      setState(() {
-        checkInStatusText = 'Sudah Check In'; // Update status
-      });
-    });
+  void _navigateToQRScanPage(String status) async {
+    bool alreadyCheckedIn = await _checkIfCheckedInToday();
+
+    if (!alreadyCheckedIn && status == 'Hadir') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => QRScanPage()),
+      );
+    }
+    await _setWorkStatus(status);
   }
 
-Future<void> _setWorkStatus(String status) async {
-  setState(() {
-    checkInStatusText = status; // Update status di UI
-  });
+  Future<bool> _checkIfCheckedInToday() async {
+    var today = DateTime.now();
+    var startOfDay = DateTime(today.year, today.month, today.day, 0, 0, 0);
+    var endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59);
 
-  try {
-    // Periksa izin lokasi dan ambil posisi saat ini
-    Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+    var querySnapshot = await FirebaseFirestore.instance
+        .collection('attendance')
+        .where('uid', isEqualTo: _user!.uid)
+        // .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+        // .where('checkin', isLessThanOrEqualTo: endOfDay)
+        .get();
 
-    // Dapatkan latitude dan longitude dari posisi pengguna
-    final location = {
-      'lat': position.latitude,
-      'long': position.longitude
-    };
-
-    // Dapatkan data qr_code, ini bisa berasal dari logika scan QR yang sudah ada
-    final qrCode = "-"; // Gantilah dengan nilai sebenarnya dari QR scanner
-
-    // Simpan data ke Firestore
-    await FirebaseFirestore.instance.collection('attendance').add({
-      'employee_name': userName,
-      'location': location,  // Simpan lokasi dalam format Map
-      'qr_code': qrCode,
-      'timestamp': FieldValue.serverTimestamp(), // Mendapatkan timestamp server
-      'uid': _user!.uid,  // UID dari pengguna yang login
-      'status': status,  // Status yang dipilih oleh pengguna
-    });
-
-    // Menampilkan pesan sukses jika diperlukan
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Status berhasil disimpan: $status'),
-    ));
-  } catch (e) {
-    print('Error menyimpan status: $e');
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Gagal menyimpan status: $e'),
-    ));
+    if (querySnapshot.docs.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Anda sudah melakukan check-in hari ini')),
+      );
+      return true; // Return true if already checked in
+    }
+    return false; // Return false if not checked in
   }
-}
 
-  Future<void> _showWorkStatusOptions() async {
-    showDialog(
+  void _showWorkStatusOptions() {
+    showModalBottomSheet(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Pilih Status Kerja'),
-          content: SizedBox(
-            height: 200, // tinggi pop-up
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildStatusOption('WFO', Icons.business, () {
-                      Navigator.of(context).pop(); // Tutup dialog
-                      _navigateToQRScanPage(); // Arahkan ke QR scanner
-                    }),
-                    _buildStatusOption('Telat', Icons.lock_clock, () {
-                      Navigator.of(context).pop(); // Tutup dialog
-                      _setWorkStatus('Telat'); // Set status kerja sebagai Telat
-                    }),
-                  ],
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildStatusOption('Izin', Icons.assignment, () {
-                      Navigator.of(context).pop(); // Tutup dialog
-                      _setWorkStatus('Izin'); // Set status kerja Izin
-                    }),
-                    _buildStatusOption('Sakit', Icons.sick, () {
-                      Navigator.of(context).pop(); // Tutup dialog
-                      _setWorkStatus('Sakit'); // Set status kerja sebagai Sakit
-                    }),
-                  ],
-                ),
-              ],
-            ),
+        return Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Work Status',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatusOption('WFO', Icons.work, () {
+                    Navigator.of(context).pop();
+                    _navigateToQRScanPage("Hadir");
+                  }),
+                  _buildStatusOption('Late', Icons.access_time, () {
+                    Navigator.of(context).pop();
+                    _setWorkStatus('Telat');
+                  }),
+                  _buildStatusOption('Permit', Icons.approval, () {
+                    Navigator.of(context).pop();
+                    _setWorkStatus('Izin');
+                  }),
+                  _buildStatusOption('Sick', Icons.sick, () {
+                    Navigator.of(context).pop();
+                    _setWorkStatus('Sakit');
+                  }),
+                ],
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  Widget _buildStatusOption(String title, IconData icon, VoidCallback onTap) {
+  Widget _buildStatusOption(String status, IconData icon, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
         children: [
-          Icon(icon, size: 50),
-          Text(title),
+          Icon(icon, size: 40),
+          const SizedBox(height: 8),
+          Text(status),
         ],
       ),
     );
   }
 
   Widget _buildAttendanceSection(
-    
       String formattedCheckInTime,
       String checkInStatus,
       String formattedCheckOutTime,
@@ -367,11 +489,6 @@ Future<void> _setWorkStatus(String status) async {
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Column(
         children: [
-          const Text(
-            'Presensi Hari Ini',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -385,8 +502,8 @@ Future<void> _setWorkStatus(String status) async {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _buildInfoCard(Icons.coffee, 'Waktu Istirahat',
-                  formattedBreakTime, 'Rata-rata 1 Jam'),
+              _buildInfoCard(Icons.holiday_village, 'Istirahat',
+                  absenceDays.toString(), 'Tidak Hadir'),
               _buildInfoCard(Icons.calendar_today, 'Total Hari',
                   workingDays.toString(), 'Hari Kerja'),
             ],
@@ -433,22 +550,21 @@ Future<void> _setWorkStatus(String status) async {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('Konfirmasi Logout'),
-          content: Text('Apakah Anda yakin ingin logout dari aplikasi?'),
+          title: const Text('Konfirmasi Logout'),
+          content: const Text('Apakah Anda yakin ingin logout dari aplikasi?'),
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.of(context)
-                    .pop(); // Tutup dialog jika tidak jadi logout
+                Navigator.of(context).pop();
               },
-              child: Text('Tidak'),
+              child: const Text('Tidak'),
             ),
             TextButton(
               onPressed: () {
-                _logout(); // Panggil fungsi logout
-                Navigator.of(context).pop(); // Tutup dialog setelah logout
+                _logout();
+                Navigator.of(context).pop();
               },
-              child: Text('Ya'),
+              child: const Text('Ya'),
             ),
           ],
         );
@@ -457,10 +573,65 @@ Future<void> _setWorkStatus(String status) async {
   }
 
   Future<void> _logout() async {
-    await _auth.signOut(); // Proses logout
+    await _auth.signOut();
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => LoginPage()),
     );
+  }
+
+  Future<bool> _setWorkStatus(String status) async {
+    try {
+      // Periksa apakah pengguna sudah check-in hari ini
+      var today = DateTime.now();
+      var startOfDay = DateTime(
+          today.year, today.month, today.day, 0, 0, 0); // Awal hari (00:00)
+      var endOfDay = DateTime(
+          today.year, today.month, today.day, 23, 59, 59); // Akhir hari (23:59)
+
+      // Query untuk mengambil attendance pada hari ini untuk user saat ini
+      var querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('uid', isEqualTo: _user!.uid)
+          // .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+          // .where('checkin', isLessThanOrEqualTo: endOfDay)
+          .get();
+
+      // Jika sudah ada check-in pada hari ini
+      if (querySnapshot.docs.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Anda sudah melakukan check-in hari ini')),
+        );
+        return true; // Return true jika sudah check-in
+      }
+
+      // Jika belum ada check-in, lanjutkan dengan proses penyimpanan check-in
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+
+      final location = {'lat': position.latitude, 'long': position.longitude};
+      final qrCode = "-";
+
+      await FirebaseFirestore.instance.collection('attendance').add({
+        'employee_name': userName,
+        'location': location,
+        'qr_code': qrCode,
+        'checkin': FieldValue.serverTimestamp(),
+        'uid': _user!.uid,
+        'status': status,
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Status berhasil disimpan: $status'),
+      ));
+      _fetchAttendanceData();
+      return false; // Return false jika belum check-in dan proses berhasil
+    } catch (e) {
+      print('Error menyimpan status: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Gagal melakukan check-in: $e'),
+      ));
+      return true; // Mengembalikan true jika terjadi error
+    }
   }
 }

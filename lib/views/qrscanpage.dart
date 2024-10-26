@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
 import 'package:skripsi/views/home.dart';
-import '../viewmodels/attendance_viewmodel.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,7 +15,6 @@ class QRScanPage extends StatefulWidget {
 class _QRScanPageState extends State<QRScanPage> {
   final GlobalKey qrKey = GlobalKey();
   QRViewController? controller;
-  final AttendanceViewModel _attendanceViewModel = AttendanceViewModel();
   bool isProcessing = false;
 
   @override
@@ -64,7 +62,7 @@ class _QRScanPageState extends State<QRScanPage> {
         await FirebaseFirestore.instance.collection('attendance').add({
           'qr_code': qrCode,
           'location_from_qr': location,
-          'timestamp': DateTime.now(),
+          'checkin': DateTime.now(),
           'location': {
             'latitude': position.latitude,
             'longitude': position.longitude,
