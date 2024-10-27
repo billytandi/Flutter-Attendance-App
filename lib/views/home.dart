@@ -36,6 +36,8 @@ class _HomeState extends State<Home> {
   String formattedBreakTime = '-'; // Default value
   int workingDays = 0;
   int absenceDays = 0;
+  DateTime? lastFetchDate;
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +50,7 @@ class _HomeState extends State<Home> {
     });
     _fetchWorkingDays();
     _fetchAbsenceDays();
+    _fetchAttendanceData();
   }
 
   Future<int> getWorkingDaysCount() async {
@@ -55,7 +58,7 @@ class _HomeState extends State<Home> {
       var querySnapshot = await FirebaseFirestore.instance
           .collection('attendance')
           .where('uid', isEqualTo: _user!.uid)
-          .where('status', whereIn: ['Hadir', 'Telat']).get();
+          .where('status', whereIn: ['Hadir', 'Late']).get();
       return querySnapshot.docs.length;
     } catch (e) {
       print('Error fetching working days count: $e');
@@ -99,7 +102,7 @@ class _HomeState extends State<Home> {
       );
     } else {
       _fetchUserData();
-      _fetchAttendanceData(); // Panggil fetch attendance data
+      _fetchAttendanceData();
     }
   }
 
@@ -112,8 +115,8 @@ class _HomeState extends State<Home> {
       if (userDoc.exists) {
         var userData = userDoc.data() as Map<String, dynamic>;
         setState(() {
-          userName = userData['name'] ?? 'Nama tidak tersedia';
-          userPosition = userData['position'] ?? 'Posisi dak tersedia';
+          userName = userData['name'];
+          userPosition = userData['position'];
           isLoading = false;
         });
       } else {
@@ -132,98 +135,77 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<void> _setCheckoutTime() async {
-    try {
-      var today = DateTime.now();
-      var startOfDay = DateTime(
-          today.year, today.month, today.day, 0, 0, 0); // Awal hari (00:00)
-      var endOfDay = DateTime(
-          today.year, today.month, today.day, 23, 59, 59); // Akhir hari (23:59)
-
-      // Query untuk mengambil attendance pada hari ini untuk user saat ini
-      var querySnapshot = await FirebaseFirestore.instance
-          .collection('attendance')
-          .where('uid', isEqualTo: _user!.uid)
-          .where('checkin',
-              isGreaterThanOrEqualTo:
-                  startOfDay) // Filter attendance mulai dari awal hari ini
-          .where('checkin',
-              isLessThanOrEqualTo: endOfDay) // Sampai akhir hari ini
-          .get();
-
-      // Jika sudah ada check-in pada hari ini
-      if (querySnapshot.docs.isEmpty) {
-        // Tampilkan pesan bahwa pengguna sudah melakukan check-inV
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Anda sudah melakukan check-out hari ini'),
-          ),
-        );
-        return; // Batalkan proses check-in
-      }
-      if (querySnapshot.docs.isNotEmpty) {
-        var attendanceDoc = querySnapshot.docs.first;
-        print('User UID: ${_user!.uid}');
-
-        await FirebaseFirestore.instance
-            .collection('attendance')
-            .doc(attendanceDoc.id) // Use the document ID
-            .update({
-          'checkout': FieldValue.serverTimestamp(),
-        });
-
-        // Setelah checkout, fetch ulang data attendance untuk memperbarui UI
-        _fetchAttendanceData();
-
-        print('Checkout time updated successfully.');
-      } else {
-        print('Attendance document not found for user: ${_user!.uid}');
-      }
-    } catch (e) {
-      print('Error updating checkout time: $e');
-    }
+  void _resetDailyAttendance() {
+    setState(() {
+      formattedCheckInTime = '-';
+      checkInStatus = 'Belum Check In';
+      formattedCheckOutTime = '-';
+      checkOutStatus = 'Belum Check Out';
+    });
   }
 
   Future<void> _fetchAttendanceData() async {
     try {
+      DateTime currentDate = DateTime.now();
+      var startOfDay = DateTime(
+          currentDate.year, currentDate.month, currentDate.day, 0, 0, 0);
+      var endOfDay = DateTime(
+          currentDate.year, currentDate.month, currentDate.day, 23, 59, 59);
+
+      // Query today's attendance record
       var querySnapshot = await FirebaseFirestore.instance
           .collection('attendance')
           .where('uid', isEqualTo: _user!.uid)
+          .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+          .where('checkin', isLessThanOrEqualTo: endOfDay)
+          .limit(1)
           .get();
 
-      if (querySnapshot.docs.isNotEmpty) {
-        var attendanceDoc = querySnapshot.docs.first.data();
-
-        DateTime? checkInTimestamp =
-            (attendanceDoc['checkin'] as Timestamp?)?.toDate();
-        DateTime? checkOutTimestamp =
-            (attendanceDoc['checkout'] as Timestamp?)?.toDate();
-
+      // Check if there is no attendance record for today
+      if (querySnapshot.docs.isEmpty) {
+        // Reset UI if no check-in record exists for today
         setState(() {
-          if (checkInTimestamp != null) {
-            formattedCheckInTime = DateFormat('HH:mm').format(checkInTimestamp);
-            checkInStatus = attendanceDoc['status'] ?? 'Tidak Ada Status';
-          }
-
-          if (checkOutTimestamp != null) {
-            formattedCheckOutTime =
-                DateFormat('HH:mm').format(checkOutTimestamp);
-            checkOutStatus = attendanceDoc['status'] ?? 'Tidak Ada Status';
-
-            if (checkOutTimestamp.hour > 18) {
-              checkOutStatus = 'Lembur';
-            } else if (checkOutTimestamp.hour > 16 ||
-                (checkOutTimestamp.hour == 16 &&
-                    checkOutTimestamp.minute >= 30)) {
-              checkOutStatus = 'On Time';
-            } else {
-              checkOutStatus = 'Pulang Cepat';
-            }
-          }
+          formattedCheckInTime = '-';
+          checkInStatus = 'Belum Check In';
+          formattedCheckOutTime = '-';
+          checkOutStatus = 'Belum Check Out';
         });
-      } else {
-        print('Dokumen attendance tidak ditemukan.');
+        return;
       }
+
+      // Otherwise, retrieve today's attendance data
+      var attendanceDoc = querySnapshot.docs.first.data();
+
+      DateTime? checkInTimestamp =
+          (attendanceDoc['checkin'] as Timestamp?)?.toDate();
+      DateTime? checkOutTimestamp =
+          (attendanceDoc['checkout'] as Timestamp?)?.toDate();
+
+      setState(() {
+        // Update UI with today's check-in data if exists
+        if (checkInTimestamp != null) {
+          formattedCheckInTime = DateFormat('HH:mm').format(checkInTimestamp);
+          checkInStatus = 'Sudah Check In';
+        } else {
+          checkInStatus = 'Belum Check In';
+        }
+
+        // Update UI with today's check-out data if exists
+        if (checkOutTimestamp != null) {
+          formattedCheckOutTime = DateFormat('HH:mm').format(checkOutTimestamp);
+          print(formattedCheckOutTime);
+          print(checkOutTimestamp);
+          checkOutStatus = checkOutTimestamp.hour > 18
+              ? 'Lembur'
+              : (checkOutTimestamp.hour > 16 ||
+                      (checkOutTimestamp.hour == 16 &&
+                          checkOutTimestamp.minute >= 30))
+                  ? 'On Time'
+                  : 'Pulang Cepat';
+        } else {
+          checkOutStatus = 'Belum Check Out';
+        }
+      });
     } catch (e) {
       print('Error fetching attendance data: $e');
     }
@@ -352,7 +334,7 @@ class _HomeState extends State<Home> {
                             child: const Text('Ya, Checkout'),
                             onPressed: () {
                               Navigator.of(context).pop();
-                              _setCheckoutTime(); // Update checkout time
+                              _setCheckoutTime();
                             },
                           ),
                         ],
@@ -400,7 +382,7 @@ class _HomeState extends State<Home> {
         MaterialPageRoute(builder: (context) => QRScanPage()),
       );
     }
-    await _setWorkStatus(status);
+    _fetchAttendanceData();
   }
 
   Future<bool> _checkIfCheckedInToday() async {
@@ -411,17 +393,45 @@ class _HomeState extends State<Home> {
     var querySnapshot = await FirebaseFirestore.instance
         .collection('attendance')
         .where('uid', isEqualTo: _user!.uid)
-        // .where('checkin', isGreaterThanOrEqualTo: startOfDay)
-        // .where('checkin', isLessThanOrEqualTo: endOfDay)
+        .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+        .where('checkin', isLessThanOrEqualTo: endOfDay)
         .get();
 
     if (querySnapshot.docs.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Anda sudah melakukan check-in hari ini')),
       );
-      return true; // Return true if already checked in
+      return true;
     }
-    return false; // Return false if not checked in
+    return false;
+  }
+
+  void _showConfirmationDialog(String status) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Konfirmasi Status Kehadiran'),
+          content: Text(
+              'Apakah Anda yakin ingin menandai kehadiran Anda sebagai $status?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Batal'),
+            ),
+            TextButton(
+              onPressed: () {
+                _setWorkStatus(status);
+                Navigator.of(context).pop();
+              },
+              child: Text('Ya'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showWorkStatusOptions() {
@@ -468,7 +478,13 @@ class _HomeState extends State<Home> {
 
   Widget _buildStatusOption(String status, IconData icon, VoidCallback onTap) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        if (status == 'Late' || status == 'Permit' || status == 'Sick') {
+          _showConfirmationDialog(status);
+        } else {
+          onTap();
+        }
+      },
       child: Column(
         children: [
           Icon(icon, size: 40),
@@ -580,58 +596,109 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Future<bool> _setWorkStatus(String status) async {
+  Future<void> _setWorkStatus(String status) async {
     try {
-      // Periksa apakah pengguna sudah check-in hari ini
       var today = DateTime.now();
-      var startOfDay = DateTime(
-          today.year, today.month, today.day, 0, 0, 0); // Awal hari (00:00)
-      var endOfDay = DateTime(
-          today.year, today.month, today.day, 23, 59, 59); // Akhir hari (23:59)
+      var startOfDay = DateTime(today.year, today.month, today.day, 0, 0, 0);
+      var endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59);
 
-      // Query untuk mengambil attendance pada hari ini untuk user saat ini
       var querySnapshot = await FirebaseFirestore.instance
           .collection('attendance')
           .where('uid', isEqualTo: _user!.uid)
-          // .where('checkin', isGreaterThanOrEqualTo: startOfDay)
-          // .where('checkin', isLessThanOrEqualTo: endOfDay)
+          .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+          .where('checkin', isLessThanOrEqualTo: endOfDay)
           .get();
 
-      // Jika sudah ada check-in pada hari ini
       if (querySnapshot.docs.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Anda sudah melakukan check-in hari ini')),
         );
-        return true; // Return true jika sudah check-in
+        return;
       }
 
-      // Jika belum ada check-in, lanjutkan dengan proses penyimpanan check-in
+      // If not checked in, get the current position
+
       Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
-
       final location = {'lat': position.latitude, 'long': position.longitude};
-      final qrCode = "-";
 
+      final qrCode = "-"; // Set QR code if applicable, else keep as '-'
       await FirebaseFirestore.instance.collection('attendance').add({
-        'employee_name': userName,
-        'location': location,
-        'qr_code': qrCode,
-        'checkin': FieldValue.serverTimestamp(),
         'uid': _user!.uid,
-        'status': status,
+        'employee_name': userName,
+        'status': status, // Save the selected work status
+        'checkin': FieldValue.serverTimestamp(), // Set the check-in time
+        'location': location,
+        'qr_code': qrCode, // Optional QR code field
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Status berhasil disimpan: $status'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text('Status kehadiran berhasil disimpan sebagai $status')),
+      );
+
       _fetchAttendanceData();
-      return false; // Return false jika belum check-in dan proses berhasil
+      _fetchWorkingDays();
+      _fetchAbsenceDays();
     } catch (e) {
-      print('Error menyimpan status: $e');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Gagal melakukan check-in: $e'),
-      ));
-      return true; // Mengembalikan true jika terjadi error
+      print('Error setting work status: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal menyimpan status kehadiran: $e')),
+      );
+    }
+  }
+
+  Future<void> _setCheckoutTime() async {
+    try {
+      var today = DateTime.now();
+      var startOfDay = DateTime(today.year, today.month, today.day, 0, 0, 0);
+      var endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59);
+
+      // Query today's attendance record
+      var querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('uid', isEqualTo: _user!.uid)
+          .where('checkin', isGreaterThanOrEqualTo: startOfDay)
+          .where('checkin', isLessThanOrEqualTo: endOfDay)
+          .limit(1)
+          .get();
+
+      // Check if user has checked in today
+      if (querySnapshot.docs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Anda belum check-in hari ini')),
+        );
+        return;
+      }
+
+      var attendanceDoc = querySnapshot.docs.first;
+
+      // Check if the 'checkout' field exists and if it already has a value
+      if (attendanceDoc.data().containsKey('checkout') &&
+          attendanceDoc['checkout'] != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Anda sudah melakukan checkout hari ini')),
+        );
+        return; // Exit if already checked out
+      }
+
+      // Update the Firestore document with checkout time using document ID
+      await FirebaseFirestore.instance
+          .collection('attendance')
+          .doc(attendanceDoc.id) // Use the specific document ID
+          .update({'checkout': FieldValue.serverTimestamp()});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Checkout berhasil disimpan')),
+      );
+
+      _fetchAttendanceData(); // Refresh data after successful checkout
+    } catch (e) {
+      print('Error updating checkout time: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal melakukan checkout: $e')),
+      );
     }
   }
 }
