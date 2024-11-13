@@ -14,6 +14,7 @@ double rangeKantor(double lat1, double lon1, double lat2, double lon2) {
   return R * c; // Jarak dalam meter
 }
 
+
 double rangeKampus(double lat1, double lon1, double lat2, double lon2) {
   const double R = 6371e3; // Radius bumi dalam meter
   double phi1 = lat1 * (3.141592653589793238 / 180); // Konversi ke radian
