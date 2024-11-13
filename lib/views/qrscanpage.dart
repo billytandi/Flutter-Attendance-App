@@ -87,7 +87,7 @@ class _QRScanPageState extends State<QRScanPage> {
                     MaterialPageRoute(builder: (context) => Home()),
                     (Route<dynamic> route) => false,
                   );
-                  setState(() {
+                    setState(() {
                     isProcessing = false;
                   });
                 },

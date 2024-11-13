@@ -185,7 +185,7 @@ class _HomeState extends State<Home> {
         // Update UI with today's check-in data if exists
         if (checkInTimestamp != null) {
           formattedCheckInTime = DateFormat('HH:mm').format(checkInTimestamp);
-          checkInStatus = 'Sudah Check In';
+          checkInStatus = checkInTimestamp.hour < 8 ? 'On Time' : 'Telat';
         } else {
           checkInStatus = 'Belum Check In';
         }
@@ -305,7 +305,7 @@ class _HomeState extends State<Home> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               ElevatedButton(
-                onPressed: _showWorkStatusOptions,
+                onPressed: _checkIfCheckedInToday,
                 child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: const [
@@ -315,33 +315,7 @@ class _HomeState extends State<Home> {
                     ]),
               ),
               ElevatedButton(
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (BuildContext context) {
-                      return AlertDialog(
-                        title: const Text('Konfirmasi Checkout'),
-                        content: const Text(
-                            'Apakah Anda yakin ingin melakukan checkout?'),
-                        actions: [
-                          TextButton(
-                            child: const Text('Batal'),
-                            onPressed: () {
-                              Navigator.of(context).pop();
-                            },
-                          ),
-                          TextButton(
-                            child: const Text('Ya, Checkout'),
-                            onPressed: () {
-                              Navigator.of(context).pop();
-                              _setCheckoutTime();
-                            },
-                          ),
-                        ],
-                      );
-                    },
-                  );
-                },
+                onPressed:_checkIfCheckedOutToday,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: const [
@@ -403,6 +377,29 @@ class _HomeState extends State<Home> {
       );
       return true;
     }
+    _showWorkStatusOptions();
+    return false;
+  }
+
+  Future<bool> _checkIfCheckedOutToday() async {
+    var today = DateTime.now();
+    var startOfDay = DateTime(today.year, today.month, today.day, 0, 0, 0);
+    var endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59);
+
+    var querySnapshot = await FirebaseFirestore.instance
+        .collection('attendance')
+        .where('uid', isEqualTo: _user!.uid)
+        .where('checkout', isGreaterThanOrEqualTo: startOfDay)
+        .where('checkout', isLessThanOrEqualTo: endOfDay)
+        .get();
+
+    if (querySnapshot.docs.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Anda sudah melakukan check-out hari ini')),
+      );
+      return true;
+    }
+    _setCheckoutConfirm();
     return false;
   }
 
@@ -452,19 +449,19 @@ class _HomeState extends State<Home> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildStatusOption('WFO', Icons.work, () {
-                    Navigator.of(context).pop();
+                    Navigator.of(context).pop(); // Close the modal here
                     _navigateToQRScanPage("Hadir");
                   }),
                   _buildStatusOption('Late', Icons.access_time, () {
-                    Navigator.of(context).pop();
+                    Navigator.of(context).pop(); // Close the modal here
                     _setWorkStatus('Telat');
                   }),
                   _buildStatusOption('Permit', Icons.approval, () {
-                    Navigator.of(context).pop();
+                    Navigator.of(context).pop(); // Close the modal here
                     _setWorkStatus('Izin');
                   }),
                   _buildStatusOption('Sick', Icons.sick, () {
-                    Navigator.of(context).pop();
+                    Navigator.of(context).pop(); // Close the modal here
                     _setWorkStatus('Sakit');
                   }),
                 ],
@@ -475,6 +472,34 @@ class _HomeState extends State<Home> {
       },
     );
   }
+
+void _setCheckoutConfirm() {
+  showDialog(
+                    context: context,
+                    builder: (BuildContext context) {
+                      return AlertDialog(
+                        title: const Text('Konfirmasi Checkout'),
+                        content: const Text(
+                            'Apakah Anda yakin ingin melakukan checkout?'),
+                        actions: [
+                          TextButton(
+                            child: const Text('Batal'),
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                            },
+                          ),
+                          TextButton(
+                            child: const Text('Ya, Checkout'),
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              _setCheckoutTime();
+                            },
+                          ),
+                        ],
+                      );
+                    },
+                  );
+}
 
   Widget _buildStatusOption(String status, IconData icon, VoidCallback onTap) {
     return GestureDetector(
@@ -655,7 +680,7 @@ class _HomeState extends State<Home> {
       var startOfDay = DateTime(today.year, today.month, today.day, 0, 0, 0);
       var endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59);
 
-      // Query today's attendance record
+      // Fetch today's attendance entry
       var querySnapshot = await FirebaseFirestore.instance
           .collection('attendance')
           .where('uid', isEqualTo: _user!.uid)
@@ -664,40 +689,40 @@ class _HomeState extends State<Home> {
           .limit(1)
           .get();
 
-      // Check if user has checked in today
-      if (querySnapshot.docs.isEmpty) {
+      if (querySnapshot.docs.isNotEmpty) {
+        // Get the document reference
+        var attendanceDoc = querySnapshot.docs.first.reference;
+        var attendanceData = querySnapshot.docs.first.data();
+
+        // Check if 'checkout' already exists
+        if (attendanceData.containsKey('checkout') &&
+            attendanceData['checkout'] != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Anda sudah melakukan checkout hari ini')),
+          );
+          return;
+        }
+
+        // Update the document with checkout time
+        await attendanceDoc.update({
+          'checkout': FieldValue.serverTimestamp(),
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Anda belum check-in hari ini')),
+          SnackBar(content: Text('Berhasil checkout')),
         );
-        return;
-      }
 
-      var attendanceDoc = querySnapshot.docs.first;
-
-      // Check if the 'checkout' field exists and if it already has a value
-      if (attendanceDoc.data().containsKey('checkout') &&
-          attendanceDoc['checkout'] != null) {
+        // Refresh the UI data
+        _fetchAttendanceData();
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Anda sudah melakukan checkout hari ini')),
+          SnackBar(content: Text('Belum ada data check-in untuk hari ini')),
         );
-        return; // Exit if already checked out
       }
-
-      // Update the Firestore document with checkout time using document ID
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendanceDoc.id) // Use the specific document ID
-          .update({'checkout': FieldValue.serverTimestamp()});
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Checkout berhasil disimpan')),
-      );
-
-      _fetchAttendanceData(); // Refresh data after successful checkout
     } catch (e) {
-      print('Error updating checkout time: $e');
+      print('Error during checkout: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal melakukan checkout: $e')),
+        SnackBar(content: Text('Gagal checkout: $e')),
       );
     }
   }
