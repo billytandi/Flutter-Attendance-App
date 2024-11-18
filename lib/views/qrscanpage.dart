@@ -16,7 +16,8 @@ class QRScanPage extends StatefulWidget {
 class _QRScanPageState extends State<QRScanPage> {
   final GlobalKey qrKey = GlobalKey();
   QRViewController? controller;
-  bool isProcessing = false;
+  bool isProcessing = false; // Mencegah pemrosesan ganda
+  bool hasShownOutOfRangeNotification = false; // Mencegah notifikasi ganda
 
   @override
   void dispose() {
@@ -35,16 +36,25 @@ class _QRScanPageState extends State<QRScanPage> {
   }
 
   Future<void> _recordAttendance(String qrCode) async {
+    if (isProcessing) return; // Mencegah pemrosesan ulang
     setState(() {
       isProcessing = true;
     });
 
     try {
+      // Periksa apakah layanan lokasi aktif
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        await Geolocator.openLocationSettings();
+        _showSnackBar('Aktifkan layanan lokasi untuk melanjutkan.');
+        return;
+      }
+
       // Decode QR Code
       Map<String, dynamic> qrData = jsonDecode(qrCode);
       String location = qrData['location'];
-      double qrLat = -6.315686743038531;
-      double qrLon =  106.79367588428302;
+      double qrLat = -6.112721;
+      double qrLon = 106.881920;
 
       // Get UID
       User? user = FirebaseAuth.instance.currentUser;
@@ -57,47 +67,75 @@ class _QRScanPageState extends State<QRScanPage> {
 
         String employeeName = employeeSnapshot['name'];
 
-        // Get current location
+        // Periksa izin lokasi
+        LocationPermission permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+          if (permission == LocationPermission.deniedForever) {
+            _showSnackBar('Izin lokasi ditolak secara permanen.');
+            return;
+          }
+        }
+
+        // Ambil lokasi saat ini
         Position position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
+          desiredAccuracy: LocationAccuracy.bestForNavigation,
+        );
+
+
         double userLat = position.latitude;
         double userLon = position.longitude;
 
-        // Calculate the distance using Haversine
+        // Cek apakah menggunakan lokasi palsu
+        if (position.isMocked) {
+          _showSnackBar('Lokasi palsu terdeteksi. Matikan aplikasi Fake GPS.');
+          return;
+        }
+
+        // Hitung jarak dengan Haversine
         double distance = rangeKantor(qrLat, qrLon, userLat, userLon);
         print("Calculated distance to office: $distance meters");
         print("User location: Latitude $userLat, Longitude $userLon");
         print("Office location: Latitude $qrLat, Longitude $qrLon");
 
-        // Check if the user is within 50 meters of the office
-        if (distance > 15) {
-          // Show error if not within the range and exit the function
-          print("User is outside the 15-meter range. Attendance not recorded.");
 
-          // Show a pop-up notification with the distance information
-          showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Jangkauan Absensi Tidak Cukup'),
-              content: Text(
-                'Anda berada di luar jangkauan absensi.\n'
-                'Jarak ke lokasi absensi: ${distance.toStringAsFixed(2)} meter.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop(); // Close the dialog
-                  },
-                  child: const Text('OK'),
+        // Validasi jarak
+        if (distance > 20) {
+          if (!hasShownOutOfRangeNotification) {
+            hasShownOutOfRangeNotification = true;
+
+            // Tampilkan pop-up jika di luar jangkauan
+            await showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('Jangkauan Absensi Tidak Cukup'),
+                content: Text(
+                  'Anda berada di luar jangkauan absensi.\n'
+                  'Jarak ke lokasi absensi: ${distance.toStringAsFixed(2)} meter.',
                 ),
-              ],
-            ),
-          );
-
-          return; // Stop the function if the user is out of range
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      controller?.dispose(); // Tutup kamera
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (context) => Home()),
+                        (Route<dynamic> route) => false,
+                      );
+                    },
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return;
         }
 
-        // Proceed with recording attendance if within range
+        // Reset flag jika jarak dalam jangkauan
+        hasShownOutOfRangeNotification = false;
+
+        // Rekam data absensi jika di dalam jangkauan
         await FirebaseFirestore.instance.collection('attendance').add({
           'qr_code': qrCode,
           'location_from_qr': location,
@@ -111,25 +149,23 @@ class _QRScanPageState extends State<QRScanPage> {
           'status': 'Hadir'
         });
 
-        showDialog(
+        await showDialog(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Absensi Berhasil'),
-            content: Text('Selamat Pagi $employeeName di $location!\n'
-                            'Jarak ke lokasi absensi: ${distance.toStringAsFixed(2)} meter.',
+            content: Text(
+              'Selamat Pagi $employeeName di $location!\n'
+              'Jarak ke lokasi absensi: ${distance.toStringAsFixed(2)} meter.',
             ),
             actions: [
               TextButton(
                 onPressed: () {
-                  controller?.pauseCamera();
+                  controller?.dispose(); // Tutup kamera
                   Navigator.of(context).pop();
                   Navigator.of(context).pushAndRemoveUntil(
                     MaterialPageRoute(builder: (context) => Home()),
                     (Route<dynamic> route) => false,
                   );
-                  setState(() {
-                    isProcessing = false;
-                  });
                 },
                 child: const Text('OK'),
               ),
@@ -137,19 +173,22 @@ class _QRScanPageState extends State<QRScanPage> {
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('User tidak ditemukan, silakan login kembali'),
-        ));
+        _showSnackBar('User tidak ditemukan, silakan login kembali');
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Gagal memproses absensi: $e'),
-      ));
+      _showSnackBar('Gagal memproses absensi: $e');
     } finally {
       setState(() {
         isProcessing = false;
       });
     }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    setState(() {
+      isProcessing = false;
+    });
   }
 
   @override

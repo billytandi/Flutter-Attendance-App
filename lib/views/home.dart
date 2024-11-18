@@ -257,6 +257,7 @@ class _HomeState extends State<Home> {
     );
   }
 
+
   Widget _buildProfileSection() {
     return Container(
       decoration: BoxDecoration(
