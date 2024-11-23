@@ -56,6 +56,9 @@ class _QRScanPageState extends State<QRScanPage> {
       double qrLat = -6.112721;
       double qrLon = 106.881920;
 
+      double kampusLat = -6.316056;
+      double kampusLon = 106.79497;
+
       // Get UID
       User? user = FirebaseAuth.instance.currentUser;
 
