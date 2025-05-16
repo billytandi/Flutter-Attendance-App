@@ -225,7 +225,7 @@ class _HomeState extends State<Home> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SPILintern'),
+        title: const Text('S-Life'),
         actions: [
           IconButton(
             onPressed: _showLogoutConfirmationDialog,

@@ -53,11 +53,11 @@ class _QRScanPageState extends State<QRScanPage> {
       // Decode QR Code
       Map<String, dynamic> qrData = jsonDecode(qrCode);
       String location = qrData['location'];
-      double qrLat = -6.112721;
-      double qrLon = 106.881920;
+      // double qrLat = -6.112721;
+      // double qrLon = 106.881920;
 
-      double kampusLat = -6.316056;
-      double kampusLon = 106.79497;
+      // double kampusLat = -6.316056;
+      // double kampusLon = 106.79497;
 
       // Get UID
       User? user = FirebaseAuth.instance.currentUser;
@@ -96,18 +96,18 @@ class _QRScanPageState extends State<QRScanPage> {
         }
 
         // Hitung jarak dengan Haversine
-        double distance = rangeKantor(qrLat, qrLon, userLat, userLon);
+        double distance = rangeKantor(userLat, userLon);
         print("Calculated distance to office: $distance meters");
         print("User location: Latitude $userLat, Longitude $userLon");
-        print("Office location: Latitude $qrLat, Longitude $qrLon");
+        // print("Office location: Latitude $, Longitude $qrLon");
 
 
         // Validasi jarak
         if (distance > 20) {
           if (!hasShownOutOfRangeNotification) {
-            hasShownOutOfRangeNotification = true;
+            hasShownOutOfRangeNotification = true; 
 
-            // Tampilkan pop-up jika di luar jangkauan
+            // kasih pop-up jika di luar jangkauan
             await showDialog(
               context: context,
               builder: (_) => AlertDialog(
@@ -120,7 +120,7 @@ class _QRScanPageState extends State<QRScanPage> {
                   TextButton(
                     onPressed: () {
                       Navigator.of(context).pop();
-                      controller?.dispose(); // Tutup kamera
+                      controller?.dispose(); 
                       Navigator.of(context).pushAndRemoveUntil(
                         MaterialPageRoute(builder: (context) => Home()),
                         (Route<dynamic> route) => false,
